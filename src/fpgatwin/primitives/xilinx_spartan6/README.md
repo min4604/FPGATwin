@@ -13,6 +13,6 @@
 
 | 階段 | 原語 |
 | :--- | :--- |
-| MVP | `IBUF`、`OBUF`、`IBUFG`、`IBUFGDS`、`BUFG` |
+| MVP（已完成） | `IBUF`、`OBUF`、`IBUFG`、`IBUFDS`、`IBUFGDS`、`BUFG` |
 | 第二階段 | `DCM_SP`、`PLL_BASE` |
 | 之後 | `RAMB16BWER`、`ODDR2`、`DSP48A1` 等 |

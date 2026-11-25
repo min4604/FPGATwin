@@ -37,6 +37,7 @@ fpgatwin = [
     "primitives/**/*",
     "runtime/**/*",
     "ui/static/*",
+    "rtl/*.in",
 ]
 
 [tool.pytest.ini_options]

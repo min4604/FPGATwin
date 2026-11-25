@@ -64,6 +64,14 @@ class DemoCounterEngine:
         self._inputs: dict[str, int] = {p: 0 for p in self.input_pins}
         self._counter = 0
         self._cycles = 0
+        self._ps_carry = 0  # sub-cycle remainder for advance_ps, in ps * clock_hz units
+        self.connected_pins = sorted(set(self.led_pins) | self.input_pins)
+        self.status = "running"
+        self.message = ""
+        self.info: dict[str, Any] = {}
+
+    def close(self) -> None:
+        pass
 
     # ---- inputs -------------------------------------------------------------
     def set_pin(self, pin: str, value: int) -> None:
@@ -85,6 +93,12 @@ class DemoCounterEngine:
             elif not (self.switch_pins and self._inputs[self.switch_pins[0]]):
                 self._counter = (self._counter + cycles) & mask
 
+    def advance_ps(self, ps: int) -> None:
+        """Advance the simulation by *ps* picoseconds of simulated time."""
+        total = ps * self.clock_hz + self._ps_carry
+        cycles, self._ps_carry = divmod(total, PS_PER_S)
+        self.step(cycles)
+
     # ---- outputs ------------------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -94,20 +108,31 @@ class DemoCounterEngine:
                 pins[pin] = (led_value >> bit) & 1
             return {
                 "engine": self.name,
+                "status": self.status,
+                "message": self.message,
                 "pins": pins,
                 "cycles": self._cycles,
-                "sim_time_ps": self._cycles * 1_000_000_000_000 // self.clock_hz,
+                "sim_time_ps": self._cycles * PS_PER_S // self.clock_hz,
             }
 
 
-class EngineRunner:
-    """Paces an engine against wall-clock time in a background thread."""
+PS_PER_S = 1_000_000_000_000
 
-    def __init__(self, engine: DemoCounterEngine, speed: float = 1.0, period_s: float = 0.01):
+
+class EngineRunner:
+    """Paces an engine against wall-clock time in a background thread.
+
+    Each tick asks the engine to simulate the wall time that has passed (times *speed*). A slow
+    engine is capped per tick instead of accumulating debt, so the UI stays responsive and the
+    reported rate shows how far behind real time it is.
+    """
+
+    def __init__(self, engine: Any, speed: float = 1.0, period_s: float = 0.01):
         self.engine = engine
         self.speed = speed
         self.period_s = period_s
-        self.rate_hz = 0.0  # measured simulated cycles per wall-clock second
+        self.rate_hz = 0.0  # simulated reference-clock cycles per wall-clock second
+        self._max_chunk_ps = int(period_s * PS_PER_S * max(speed, 1.0))
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="fpgatwin-engine", daemon=True)
 
@@ -116,18 +141,32 @@ class EngineRunner:
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=1)
+        self._thread.join(timeout=2)
+        self.engine.close()
 
     def _run(self) -> None:
         last = time.perf_counter()
-        carry = 0.0
-        while not self._stop.wait(self.period_s):
+        took = 0.0
+        # sleep only what is left of the period: an engine slower than real time runs flat out
+        while not self._stop.wait(max(0.0, self.period_s - took)):
+            if self.engine.status != "running":
+                self.rate_hz = 0.0
+                took = 0.0
+                last = time.perf_counter()
+                continue
             now = time.perf_counter()
             dt = now - last
             last = now
-            want = self.engine.clock_hz * self.speed * dt + carry
-            cycles = int(want)
-            carry = want - cycles
-            self.engine.step(cycles)
+            want = int(dt * self.speed * PS_PER_S)
+            chunk = min(want, self._max_chunk_ps)
+            t0 = time.perf_counter()
+            self.engine.advance_ps(chunk)
+            took = time.perf_counter() - t0
+            # adapt the cap so one call takes about one period (keeps inputs responsive)
+            if took > 2 * self.period_s:
+                self._max_chunk_ps = max(1000, self._max_chunk_ps // 2)
+            elif took < self.period_s and chunk == self._max_chunk_ps:
+                self._max_chunk_ps = min(self._max_chunk_ps * 2, int(PS_PER_S * self.speed))
             if dt > 0:
-                self.rate_hz = 0.8 * self.rate_hz + 0.2 * (cycles / dt)
+                ratio = chunk / (dt * PS_PER_S)
+                self.rate_hz = 0.8 * self.rate_hz + 0.2 * ratio * self.engine.clock_hz

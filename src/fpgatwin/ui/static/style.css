@@ -87,6 +87,58 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
   font-size: 14px;
 }
 
+.banner-stop { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+
+/* pins the loaded design does not use */
+.nc { opacity: 0.38; }
+
+[hidden] { display: none !important; }
+/* visually hidden but still focusable (file inputs inside .btn labels) */
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip-path: inset(50%); }
+
+/* ---- design files ---- */
+.btn {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 14px; line-height: 1;
+  padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:focus-within, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); font-weight: 600; }
+.btn-ghost { background: transparent; }
+.design-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.file-list { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.file-list:empty { display: none; }
+.file-list li {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+  padding: 3px 4px 3px 8px; border-radius: 6px; background: var(--surface-2);
+}
+.file-list li.ucf { background: var(--accent-soft); }
+.file-list button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 4px;
+}
+.design-form { display: flex; flex-wrap: wrap; gap: 12px; margin: 6px 0 12px; font-size: 13px; color: var(--muted); }
+.design-form label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.design-form select, .design-form input {
+  font: inherit; font-size: 14px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; min-width: 180px; max-width: 100%;
+}
+.build-status { font-size: 13px; color: var(--muted); }
+.build-status.ok { color: var(--accent); }
+.build-status.err { color: var(--warn-text); }
+.build-report { margin-top: 12px; font-size: 13px; }
+.build-report pre {
+  margin: 6px 0 0; padding: 10px; border-radius: 6px; background: var(--surface-2);
+  font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+  overflow: auto; max-height: 260px; white-space: pre;
+}
+.build-report .warn { color: var(--warn-text); }
+.build-report summary { cursor: pointer; color: var(--muted); }
+
 /* ---- layout ---- */
 .layout {
   display: grid;
@@ -174,6 +226,30 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 
 .uart { font-size: 13px; border-radius: 6px; padding: 10px; background: var(--surface-2); }
 .uart-off { color: var(--muted); }
+.uart-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+.uart-bar label { display: inline-flex; align-items: center; gap: 6px; }
+.uart-bar select, .uart-send select, .uart-send input {
+  font: inherit; font-size: 14px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+}
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; font-size: 13px; padding: 4px 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.btn-sm { padding: 5px 10px; font-size: 13px; }
+.uart-bar .btn-sm { margin-left: auto; }
+.uart-err { color: var(--warn-text); background: var(--warn-bg); padding: 2px 8px; border-radius: 999px; }
+.uart-out {
+  margin: 0; height: 220px; overflow: auto; padding: 10px 12px; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.45;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.uart-out:empty::before { content: "（尚未收到資料）"; color: var(--muted); }
+.uart-out .ctl { color: var(--muted); }
+.uart-send { display: flex; gap: 8px; margin-top: 8px; }
+.uart-send input { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; }
+.uart-note { margin: 8px 0 0; }
 
 .foot { padding: 0 20px 20px; font-size: 12px; }
 

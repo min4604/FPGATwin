@@ -18,11 +18,14 @@ def server():
     thread.join(timeout=2)
 
 
-def request(srv, method, path, body=None):
+def request(srv, method, path, body=None, token=True, headers=None):
     host, port = srv.server_address[:2]
-    conn = http.client.HTTPConnection(host, port, timeout=5)
-    headers = {"Content-Type": "application/json"} if body is not None else {}
-    conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
+    conn = http.client.HTTPConnection(host, port, timeout=60)
+    hdrs = {"Content-Type": "application/json"} if body is not None else {}
+    if token and method == "POST":
+        hdrs["X-FPGATwin-Token"] = srv.token
+    hdrs.update(headers or {})
+    conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=hdrs)
     resp = conn.getresponse()
     data = resp.read()
     conn.close()
@@ -78,3 +81,145 @@ def test_event_stream_sends_snapshot(server):
     assert snap["engine"] == "demo"
     assert "E13" in snap["pins"]
     conn.close()
+
+
+# ---- security ---------------------------------------------------------------
+
+
+def test_index_embeds_token(server):
+    _, data = request(server, "GET", "/")
+    assert server.token.encode() in data
+    assert b"@TOKEN@" not in data
+
+
+def test_post_requires_token(server):
+    resp, _ = request(server, "POST", "/api/pin", {"pin": "D14", "value": 1}, token=False)
+    assert resp.status == 403
+    resp, _ = request(server, "POST", "/api/pin", {"pin": "D14", "value": 1}, token=False,
+                      headers={"X-FPGATwin-Token": "wrong"})
+    assert resp.status == 403
+    assert server.runner.engine.snapshot()["pins"]["D14"] == 0
+
+
+def test_bad_host_rejected(server):
+    """DNS rebinding: a page on evil.example resolving to 127.0.0.1 sends Host: evil.example."""
+    for method in ("GET", "POST"):
+        resp, _ = request(server, method, "/api/board" if method == "GET" else "/api/pin",
+                          {"pin": "D14", "value": 1} if method == "POST" else None,
+                          headers={"Host": f"evil.example:{server.port}"})
+        assert resp.status == 403
+
+
+def test_localhost_host_allowed(server):
+    resp, _ = request(server, "GET", "/api/board", headers={"Host": f"localhost:{server.port}"})
+    assert resp.status == 200
+
+
+# ---- loading designs ------------------------------------------------------------
+
+
+def test_load_disabled_without_loader(server):
+    _, data = request(server, "GET", "/api/board")
+    assert json.loads(data)["can_load"] is False
+    resp, _ = request(server, "POST", "/api/load", {"files": []})
+    assert resp.status == 501
+
+
+class _FakeEngine:
+    """Stands in for VerilatorEngine so the upload path is tested without a toolchain."""
+
+    name = "fake"
+    clock_hz = 27_000_000
+
+    def __init__(self):
+        self.clock = {"name": "USER_CLOCK", "freq_hz": 27_000_000}
+        self.connected_pins = ["E13"]
+        self.info = {"top": "blinky"}
+        self.closed = False
+
+    def set_pin(self, pin, value):
+        pass
+
+    def advance_ps(self, ps):
+        pass
+
+    def snapshot(self):
+        return {"engine": "fake", "status": "running", "message": "", "pins": {"E13": 1},
+                "cycles": 0, "sim_time_ps": 0}
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def loading_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("FPGATWIN_CACHE", str(tmp_path / "cache"))
+    calls = []
+
+    def loader(hdl, ucf, top):
+        calls.append((hdl, ucf, top))
+        if top == "boom":
+            raise RuntimeError("build exploded")
+        return _FakeEngine()
+
+    srv = create_server(load_board("xilinx_sp601"), port=0, loader=loader)
+    srv.calls = calls
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield srv
+    srv.close()
+    thread.join(timeout=2)
+
+
+FILES = [{"name": "blinky.v", "content": "module blinky; endmodule\n"},
+         {"name": "inc.vh", "content": "`define X 1\n"},
+         {"name": "pins.ucf", "content": 'NET "LED<0>" LOC = "E13";\n'}]
+
+
+def test_load_swaps_engine(loading_server):
+    srv = loading_server
+    old = srv.runner
+    resp, data = request(srv, "POST", "/api/load", {"files": FILES, "top": "blinky"})
+    assert resp.status == 200, data
+    assert json.loads(data)["engine"]["name"] == "fake"
+    assert srv.runner is not old and srv.runner.engine.name == "fake"
+    assert old._thread is None or not old._thread.is_alive()
+    hdl, ucf, top = srv.calls[0]
+    assert [p.name for p in hdl] == ["blinky.v"] and ucf.name == "pins.ucf" and top == "blinky"
+    assert (hdl[0].parent / "inc.vh").read_text() == "`define X 1\n"
+    _, data = request(srv, "GET", "/api/board")
+    assert json.loads(data)["engine"]["name"] == "fake"
+
+    resp, data = request(srv, "POST", "/api/demo", {})
+    assert resp.status == 200
+    assert srv.runner.engine.name == "demo"
+
+
+@pytest.mark.parametrize("files, message", [
+    ([], "no files"),
+    ([FILES[0]], "no .ucf"),
+    ([FILES[0], FILES[2], {"name": "b.ucf", "content": ""}], "exactly one"),
+    ([FILES[2]], "no .v"),
+    ([FILES[0], FILES[2], {"name": "../evil.v", "content": ""}], "invalid file name"),
+    ([FILES[0], FILES[2], {"name": r"sub\evil.v", "content": ""}], "invalid file name"),
+    ([FILES[0], FILES[2], {"name": "run.bat", "content": ""}], "unsupported"),
+    ([FILES[0], FILES[2], {"name": "BLINKY.v", "content": ""}], "duplicate"),
+])
+def test_load_rejects_bad_uploads(loading_server, files, message):
+    resp, data = request(loading_server, "POST", "/api/load", {"files": files})
+    assert resp.status == 400
+    assert message in json.loads(data)["error"]
+    assert loading_server.calls == []
+    assert loading_server.runner.engine.name == "demo"
+
+
+def test_load_rejects_bad_top(loading_server):
+    resp, _ = request(loading_server, "POST", "/api/load", {"files": FILES, "top": "a b"})
+    assert resp.status == 400
+
+
+def test_load_build_failure_keeps_engine(loading_server):
+    resp, data = request(loading_server, "POST", "/api/load", {"files": FILES, "top": "boom"})
+    assert resp.status == 422
+    assert "build exploded" in json.loads(data)["error"]
+    assert loading_server.runner.engine.name == "demo"

@@ -31,9 +31,10 @@
 src/fpgatwin/
 ├── cli.py                  # 命令列入口 `fpgatwin`
 ├── board.py                # board.yaml 載入
-├── engine.py               # 模擬引擎介面（目前為 demo 引擎）
+├── engine.py               # 模擬引擎介面、demo 引擎、步調控制
+├── rtl/                    # 載入自訂 RTL：腳位對應、Verilator 建置、C++ harness、引擎
 ├── ui/                     # 本機網頁介面（HTTP + Server-Sent Events）
-├── constraints/            # .ucf / .xdc 解析（開發中）
+├── constraints/            # .ucf / .xdc 腳位約束解析
 ├── boards/<board_id>/      # 各開發板的 board.yaml
 ├── primitives/<family>/    # Clean-room FPGA 原語模型
 └── runtime/                # C++ 模擬執行環境（開發中）
@@ -49,49 +50,60 @@ conda activate fpgatwin
 pytest
 fpgatwin boards                       # 列出支援的開發板
 fpgatwin board xilinx_sp601           # 顯示板上硬體映射
-fpgatwin ui                           # 開啟虛擬開發板網頁介面（http://127.0.0.1:8600/）
+fpgatwin ui                           # 開啟虛擬開發板網頁介面（demo 引擎）
 ```
 
-### 網頁介面
+套件本身支援 Python 3.10 以上。`environment.yml` 已包含 [Verilator](https://www.veripool.org/verilator/) 與 g++。
 
-`fpgatwin ui` 會在本機（只綁定 `127.0.0.1`）啟動伺服器並開啟瀏覽器，依 `board.yaml` 畫出 LED、DIP 開關與按鈕（按住 = 按下）。
+## 載入自己的 RTL
 
-> 目前畫面由內建的 **demo 引擎** 驅動（行為同 `examples/sp601_blinky`），尚未執行你的 RTL。
+最簡單的方式是直接在網頁上選檔：執行 `fpgatwin ui`，在「設計檔案」區按「選擇檔案…」或「選擇資料夾…」，選好 `.v`/`.sv`（含 `.vh` 等 include 檔）與一個約束檔（`.ucf` 或 `.xdc`），再按「編譯並執行」。腳位對應表、警告與編譯錯誤會顯示在同一區；修改原始檔後再按一次「編譯並執行」即會重新讀取。「改用 Demo」可切回示範引擎。
+
+也可以在命令列直接指定：
+
+```bash
+fpgatwin ui --rtl my_design.v --ucf my_design.ucf
+```
+
+FPGATwin 會用 Verilator 編譯設計、依 UCF 把 port 接到板上元件，然後在瀏覽器開啟虛擬開發板。終端機會先印出腳位對應表與警告（例如 port 沒有 LOC、腳位不在板子模型中）。
 
 | 選項 | 說明 |
 | :--- | :--- |
+| `--rtl` | Verilog / SystemVerilog 檔案或資料夾，可列多個 |
+| `--ucf` | 腳位約束檔：ISE `.ucf` 或 Vivado `.xdc`（`set_property PACKAGE_PIN`） |
+| `--top` | 頂層模組名稱（預設由 Verilator 自動判斷） |
 | `--board` | 開發板 id（預設 `xilinx_sp601`） |
 | `--port` | 本機埠號（預設 `8600`） |
-| `--clock` | 驅動 demo 引擎的時脈（預設自動選單端時脈） |
-| `--speed` | 相對真實時間的模擬速度（預設 `1.0`） |
+| `--speed` | 相對真實時間的模擬速度（預設 `1.0`；跑不到時會盡量快並顯示實際速率） |
+| `--clock` | 僅 demo 引擎：驅動用的時脈 |
 | `--no-browser` | 不自動開啟瀏覽器 |
 
-套件本身支援 Python 3.10 以上。`environment.yml` 已包含 [Verilator](https://www.veripool.org/verilator/)、g++ 與 make。
-
-### 在 Windows 上用 Verilator（conda-forge 版）
-
-conda-forge 的 Windows 版 Verilator 預設的編譯器路徑指向打包機器上的 MSVC，需要手動覆寫。請在 **Git Bash** 中執行（Makefile 需要 POSIX shell）：
+只想檢查腳位對應、不開 UI：
 
 ```bash
-E="$(cygpath "$(conda run -n fpgatwin python -c 'import sys; print(sys.prefix)' | tr -d '\r')")"
-export PATH="$E/Library/bin:$E/bin:$PATH"
-perl "$E/Library/bin/verilator" --cc --exe --build -Wall \
-    -MAKEFLAGS CXX=g++ -MAKEFLAGS LINK=g++ \
-    -MAKEFLAGS AR=x86_64-w64-mingw32-ar -MAKEFLAGS PYTHON3=python \
-    -MAKEFLAGS CFG_CXXFLAGS_STD=-std=gnu++17 \
-    -LDFLAGS -static \
-    <design.v> <sim_main.cpp>
+fpgatwin build --rtl my_design.v --ucf my_design.ucf
 ```
 
-各參數的原因：
+### 目前支援範圍
 
-| 參數 | 原因 |
+- 頂層 port 接到板上的**時脈**（自動產生，差動時脈的 N 端自動反相）、**LED、DIP 開關、按鈕**
+- 已內建的 Spartan-6 原語：`IBUF`、`IBUFG`、`IBUFDS`、`IBUFGDS`、`OBUF`、`BUFG`
+- **UART**：模擬板上的 USB-UART 晶片（SP601 為 CP2103：FPGA TX = L12、RX = K14），以腳位層級收發 8N1 訊框，所以跑的是你 RTL 裡自己的 UART 邏輯。網頁的 UART 區可選鮑率（預設 115200）、以文字或 HEX 顯示、輸入文字送給 FPGA；停止位元錯誤會顯示「框架錯誤」，通常代表鮑率與設計不符。CTS 固定為允許傳送，RTS 不使用。範例見 `examples/sp601_uart_echo`
+- 設計的 `$display` 輸出會印在終端機；`$finish` 會讓模擬停止並在畫面上提示
+- 尚未支援：`inout` port、超過 64 位元的 port、DCM/PLL、UART 以外的周邊、`.xdc` 的萬用字元與 `-filter`、有 parity 或 2 個停止位元等非 8N1 的 UART 格式
+
+編譯結果依內容快取在 `%LOCALAPPDATA%\fpgatwin\cache`（Linux/macOS：`~/.cache/fpgatwin`），可用環境變數 `FPGATWIN_CACHE` 改位置。第一次編譯約 10–20 秒，之後相同設計直接重用。
+
+### Windows 備註
+
+FPGATwin 直接呼叫 `verilator_bin` 與 g++，不經過 Verilator 的 Makefile，所以一般 PowerShell 就能用，不需要 Git Bash。針對 conda-forge 工具鏈的處理（皆自動套用）：
+
+| 處理 | 原因 |
 | :--- | :--- |
-| `CXX` / `LINK` / `AR` / `PYTHON3` | 套件內 `verilated.mk` 寫死了打包機器的 MSVC 與 Python 路徑 |
+| 直接呼叫 `verilator_bin.exe` | perl 包裝程式轉傳參數時沒加引號，路徑有空格會被拆開 |
 | `-std=gnu++17` | conda-forge g++ 16 預設 C++20 時，`std::string` 會連結失敗 |
-| `-LDFLAGS -static` | 動態連結 `libstdc++-6.dll` 時執行會 segfault，靜態連結正常 |
-
-C++ harness 需自行定義 `double sc_time_stamp() { return 0; }`。之後 `fpgatwin` 指令會自動處理這些參數。
+| `-static` 靜態連結 | 動態連結 `libstdc++-6.dll` 時執行會 segfault |
+| 非 ASCII 路徑改用 8.3 短路徑，無短路徑時複製到建置目錄 | Verilator 與 MinGW g++ 只能用系統字碼頁開檔 |
 
 ## 限制
 

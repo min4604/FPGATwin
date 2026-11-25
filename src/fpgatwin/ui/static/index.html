@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="fpgatwin-token" content="@TOKEN@">
   <title>FPGATwin</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -21,11 +22,40 @@
 
   <div id="demo-banner" class="banner" hidden>
     <strong>Demo 引擎</strong>：目前畫面由內建的示範計數器驅動（行為同 <code>examples/sp601_blinky</code>），
-    <em>不是</em>你的 RTL。接上 Verilator 後會改為執行實際設計。
+    <em>不是</em>你的 RTL。在下方「設計檔案」選擇 RTL 與約束檔（.ucf / .xdc）即可執行自己的設計。
   </div>
+
+  <div id="status-banner" class="banner banner-stop" role="status" hidden></div>
 
   <main class="layout">
     <section class="board-panel" aria-label="開發板">
+      <div class="card" id="design-card">
+        <h2>設計檔案 <span class="hint">.v / .sv / .vh / .svh 與一個 .ucf 或 .xdc</span></h2>
+        <div class="design-actions">
+          <label class="btn">選擇檔案…
+            <input id="pick-files" class="vh" type="file" multiple accept=".v,.sv,.vh,.svh,.ucf,.xdc,.mem,.hex">
+          </label>
+          <label class="btn">選擇資料夾…
+            <input id="pick-dir" class="vh" type="file" webkitdirectory>
+          </label>
+          <button id="clear-files" class="btn btn-ghost" type="button" hidden>清除</button>
+        </div>
+        <ul id="file-list" class="file-list"></ul>
+        <div class="design-form">
+          <label>約束檔
+            <select id="ucf-select" disabled><option value="">（未選擇）</option></select>
+          </label>
+          <label>Top 模組
+            <input id="top-input" type="text" placeholder="自動偵測" spellcheck="false" autocomplete="off">
+          </label>
+        </div>
+        <div class="design-actions">
+          <button id="build-btn" class="btn btn-primary" type="button" disabled>編譯並執行</button>
+          <button id="demo-btn" class="btn btn-ghost" type="button">改用 Demo</button>
+          <span id="build-status" class="build-status" role="status"></span>
+        </div>
+        <div id="build-report" class="build-report" hidden></div>
+      </div>
       <div class="card">
         <h2>LED</h2>
         <div id="leds" class="row leds"></div>
@@ -37,6 +67,40 @@
       <div class="card">
         <h2>按鈕 <span class="hint">按住 = 按下</span></h2>
         <div id="buttons" class="row buttons"></div>
+      </div>
+      <div class="card" id="uart-card">
+        <h2>UART <span id="uart-label" class="hint"></span></h2>
+        <div id="uart-off" class="uart uart-off">—</div>
+        <div id="uart-on" hidden>
+          <div class="uart-bar">
+            <label>鮑率
+              <select id="uart-baud">
+                <option>9600</option><option>19200</option><option>38400</option><option>57600</option>
+                <option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+              </select>
+            </label>
+            <span class="hint">8N1</span>
+            <div class="seg" role="group" aria-label="顯示方式">
+              <button id="uart-mode-text" type="button" aria-pressed="true">文字</button>
+              <button id="uart-mode-hex" type="button" aria-pressed="false">HEX</button>
+            </div>
+            <span id="uart-err" class="uart-err" role="status" hidden></span>
+            <button id="uart-clear" class="btn btn-ghost btn-sm" type="button">清除畫面</button>
+          </div>
+          <pre id="uart-out" class="uart-out" tabindex="0" aria-label="FPGA 送出的 UART 資料"></pre>
+          <form id="uart-form" class="uart-send">
+            <input id="uart-input" type="text" placeholder="輸入要送給 FPGA 的文字，Enter 送出"
+                   autocomplete="off" spellcheck="false" aria-label="要送出的文字">
+            <select id="uart-eol" aria-label="行尾">
+              <option value="">無行尾</option>
+              <option value="lf" selected>LF</option>
+              <option value="crlf">CR+LF</option>
+              <option value="cr">CR</option>
+            </select>
+            <button class="btn btn-primary" type="submit">送出</button>
+          </form>
+          <div id="uart-note" class="hint uart-note" hidden></div>
+        </div>
       </div>
     </section>
 
@@ -53,10 +117,6 @@
       <div class="card">
         <h2>時脈</h2>
         <ul id="clocks" class="clocks"></ul>
-      </div>
-      <div class="card">
-        <h2>UART</h2>
-        <div id="uart" class="uart uart-off">尚未支援：demo 引擎沒有 UART 輸出。</div>
       </div>
     </aside>
   </main>

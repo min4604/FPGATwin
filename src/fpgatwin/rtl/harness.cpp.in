@@ -1,0 +1,290 @@
+// FPGATwin simulation harness — generated, do not edit.
+//
+// Protocol (stdin: commands, stdout: replies). Replies start with "\x1e" so they can be told
+// apart from the design's own $display output, which also goes to stdout.
+//   i <port> <hex>   set input port value
+//   r <ps>           run for <ps> picoseconds          -> "\x1eO <time_ps> <out0> <out1> ..."
+//   b <uart> <baud>  set a UART's baud rate (default 115200, 8N1)
+//   u <uart> <hex>   queue bytes for the design to receive (driven on its RX pin)
+//   q                quit
+// On start: "\x1eR".  On $finish: "\x1eF <time_ps>" then exit.
+// Before "O"/"F", each UART with news prints "\x1eU <uart> <framing_errors> <hex|->" with the
+// bytes the design transmitted since the last report.
+//
+// UART model (the board's USB-UART bridge): both directions run on simulation time. The TX
+// decoder watches the design's TX bit after every evaluation, waits for a falling edge (start
+// bit) and samples each bit in its middle. The RX driver owns the design's RX bit (idle high)
+// and changes it at exact bit boundaries, which are scheduled as events like clock edges.
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <memory>
+#include <string>
+#include "@HEADER@"
+#include "verilated.h"
+
+double sc_time_stamp() { return 0; }  // legacy hook still referenced by verilated.cpp
+
+typedef unsigned __int128 u128;
+static const uint64_t PS = 1000000000000ULL;
+static const uint64_t NEVER = ~0ULL;
+
+struct Clock {
+    uint64_t freq_hz;
+    bool inverted;
+    uint64_t k;       // number of edges already applied
+    uint64_t next_ps; // time of edge k+1
+    int level;        // 0/1 before inversion
+};
+
+static Clock clocks[@NCLOCKS@ + 1];
+static const int nclocks = @NCLOCKS@;
+
+static uint64_t edge_time(const Clock& c, uint64_t k) {
+    // edge k happens at k * T/2 = k * 1e12 / (2 f) ps, computed exactly (no drift)
+    return (uint64_t)(((u128)k * PS) / ((u128)2 * c.freq_hz));
+}
+
+static void drive_clock(@CLASS@* top, int i, int value) {
+    switch (i) {
+@CLOCK_CASES@
+        default: break;
+    }
+}
+
+// Input ports: the value Python sent, with bits owned by the harness (UART RX) overridden.
+static const int nports = @NPORTS@;
+static uint64_t in_vals[@NPORTS@ + 1];
+static uint64_t ov_mask[@NPORTS@ + 1];
+static uint64_t ov_val[@NPORTS@ + 1];
+
+static void set_input(@CLASS@* top, int port, uint64_t v) {
+    if (port < 0 || port >= nports) return;
+    in_vals[port] = v;
+    v = (v & ~ov_mask[port]) | ov_val[port];
+    switch (port) {
+@INPUT_CASES@
+        default: break;
+    }
+}
+
+static int read_output_bit(@CLASS@* top, int port, int bit) {
+    switch (port) {
+@OUTPUT_READS@
+        default: return 1;
+    }
+}
+
+static void print_outputs(@CLASS@* top, uint64_t now) {
+    std::printf("\x1eO %llu", (unsigned long long)now);
+@OUTPUT_PRINTS@
+    std::printf("\n");
+    std::fflush(stdout);
+}
+
+// ---- UART --------------------------------------------------------------------------------
+
+struct Uart {
+    int tx_port, tx_bit, rx_port, rx_bit;  // -1 when not connected
+    uint64_t baud;
+    // TX decoder (design -> PC)
+    int tx_prev;        // last level seen, -1 = unknown
+    bool tx_busy;
+    uint64_t tx_t0;     // time of the falling edge that started the frame
+    int tx_k;           // next bit to sample: 0 = start, 1..8 = data, 9 = stop
+    unsigned tx_byte;
+    std::string tx_out; // received bytes not reported yet
+    uint64_t tx_errors;
+    bool tx_news;
+    // RX driver (PC -> design)
+    std::deque<uint8_t> rx_q;
+    bool rx_busy;
+    uint64_t rx_t0;
+    int rx_k;           // next boundary: 1..9 = data/stop bits, 10 = frame done
+    uint8_t rx_cur;
+    uint64_t rx_next;   // time of the next boundary, NEVER when idle
+};
+
+static Uart uarts[@NUARTS@ + 1];
+static const int nuarts = @NUARTS@;
+
+static uint64_t bit_time(const Uart& u, uint64_t t0, uint64_t k2) {
+    // t0 + (k2 / 2) bit periods, k2 in half bits, exact
+    return t0 + (uint64_t)(((u128)k2 * PS) / ((u128)2 * u.baud));
+}
+
+static void rx_level(@CLASS@* top, Uart& u, int level) {
+    uint64_t m = 1ULL << u.rx_bit;
+    ov_mask[u.rx_port] |= m;
+    ov_val[u.rx_port] = level ? (ov_val[u.rx_port] | m) : (ov_val[u.rx_port] & ~m);
+    set_input(top, u.rx_port, in_vals[u.rx_port]);
+}
+
+static void rx_start(@CLASS@* top, Uart& u, uint64_t now) {
+    if (u.rx_busy || u.rx_q.empty() || u.rx_port < 0) return;
+    u.rx_cur = u.rx_q.front();
+    u.rx_q.pop_front();
+    u.rx_busy = true;
+    u.rx_t0 = now;
+    u.rx_k = 1;
+    u.rx_next = bit_time(u, now, 2);
+    rx_level(top, u, 0);  // start bit
+}
+
+// Apply the RX bit boundary due at `now`; after the stop bit, start the next queued byte.
+static void rx_event(@CLASS@* top, Uart& u, uint64_t now) {
+    int k = u.rx_k;
+    if (k <= 8) rx_level(top, u, (u.rx_cur >> (k - 1)) & 1);
+    else if (k == 9) rx_level(top, u, 1);  // stop bit
+    if (k < 10) {
+        u.rx_k = k + 1;
+        u.rx_next = bit_time(u, u.rx_t0, 2 * (uint64_t)(k + 1));
+    } else {
+        u.rx_busy = false;
+        u.rx_next = NEVER;
+        rx_start(top, u, now);
+    }
+}
+
+static void tx_watch(@CLASS@* top, Uart& u, uint64_t now) {
+    if (u.tx_port < 0) return;
+    int lvl = read_output_bit(top, u.tx_port, u.tx_bit);
+    if (!u.tx_busy) {
+        if (u.tx_prev == 1 && lvl == 0) {
+            u.tx_busy = true;
+            u.tx_t0 = now;
+            u.tx_k = 0;
+            u.tx_byte = 0;
+        }
+    }
+    // sample every bit whose middle has passed (outputs only change at evaluations)
+    while (u.tx_busy && now >= bit_time(u, u.tx_t0, 2 * (uint64_t)u.tx_k + 1)) {
+        if (u.tx_k == 0) {
+            if (lvl != 0) u.tx_busy = false;  // glitch, not a start bit
+        } else if (u.tx_k <= 8) {
+            u.tx_byte |= (unsigned)lvl << (u.tx_k - 1);
+        } else {
+            if (lvl == 1) u.tx_out.push_back((char)u.tx_byte);
+            else u.tx_errors++;  // framing error: stop bit missing (wrong baud?)
+            u.tx_news = true;
+            u.tx_busy = false;
+            break;
+        }
+        u.tx_k++;
+    }
+    u.tx_prev = lvl;
+}
+
+static void report_uarts() {
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < nuarts; ++i) {
+        Uart& u = uarts[i];
+        if (!u.tx_news) continue;
+        std::string h;
+        h.reserve(u.tx_out.size() * 2);
+        for (unsigned char c : u.tx_out) { h.push_back(hex[c >> 4]); h.push_back(hex[c & 15]); }
+        std::printf("\x1eU %d %llu %s\n", i, (unsigned long long)u.tx_errors,
+                    h.empty() ? "-" : h.c_str());
+        u.tx_out.clear();
+        u.tx_news = false;
+    }
+}
+
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+int main(int argc, char** argv) {
+    auto ctx = std::make_unique<VerilatedContext>();
+    ctx->commandArgs(argc, argv);
+    auto top = std::make_unique<@CLASS@>(ctx.get());
+    uint64_t now = 0;
+
+@CLOCK_INIT@
+@UART_INIT@
+    for (int i = 0; i < nclocks; ++i) drive_clock(top.get(), i, clocks[i].inverted ? 1 : 0);
+    for (int i = 0; i < nuarts; ++i) {
+        uarts[i].baud = 115200;
+        uarts[i].tx_prev = -1;
+        uarts[i].rx_next = NEVER;
+        if (uarts[i].rx_port >= 0) rx_level(top.get(), uarts[i], 1);  // idle high
+    }
+    top->eval();
+    for (int i = 0; i < nuarts; ++i) tx_watch(top.get(), uarts[i], now);
+    std::printf("\x1eR\n");
+    std::fflush(stdout);
+
+    static char line[16384];
+    while (std::fgets(line, sizeof line, stdin)) {
+        if (line[0] == 'q') break;
+        if (line[0] == 'i') {
+            int port = 0;
+            unsigned long long v = 0;
+            if (std::sscanf(line + 1, "%d %llx", &port, &v) == 2) {
+                set_input(top.get(), port, (uint64_t)v);
+                top->eval();
+            }
+        } else if (line[0] == 'b') {
+            int n = -1;
+            unsigned long long baud = 0;
+            if (std::sscanf(line + 1, "%d %llu", &n, &baud) == 2 && n >= 0 && n < nuarts && baud > 0)
+                uarts[n].baud = baud;
+        } else if (line[0] == 'u') {
+            int n = -1, off = 0;
+            if (std::sscanf(line + 1, "%d %n", &n, &off) >= 1 && n >= 0 && n < nuarts) {
+                const char* p = line + 1 + off;
+                while (hexval(p[0]) >= 0 && hexval(p[1]) >= 0) {
+                    uarts[n].rx_q.push_back((uint8_t)(hexval(p[0]) * 16 + hexval(p[1])));
+                    p += 2;
+                }
+                rx_start(top.get(), uarts[n], now);
+                top->eval();
+                tx_watch(top.get(), uarts[n], now);
+            }
+        } else if (line[0] == 'r') {
+            unsigned long long span = 0;
+            std::sscanf(line + 1, "%llu", &span);
+            const uint64_t target = now + span;
+            while (!ctx->gotFinish()) {
+                uint64_t t = target + 1;
+                for (int i = 0; i < nclocks; ++i)
+                    if (clocks[i].next_ps < t) t = clocks[i].next_ps;
+                for (int i = 0; i < nuarts; ++i)
+                    if (uarts[i].rx_next < t) t = uarts[i].rx_next;
+                if (t > target) break;
+                now = t;
+                ctx->time(now);
+                for (int i = 0; i < nuarts; ++i)
+                    if (uarts[i].rx_next == now) rx_event(top.get(), uarts[i], now);
+                for (int i = 0; i < nclocks; ++i) {
+                    Clock& c = clocks[i];
+                    if (c.next_ps == now) {
+                        c.level ^= 1;
+                        c.k += 1;
+                        c.next_ps = edge_time(c, c.k + 1);
+                        drive_clock(top.get(), i, c.level ^ (c.inverted ? 1 : 0));
+                    }
+                }
+                top->eval();
+                for (int i = 0; i < nuarts; ++i) tx_watch(top.get(), uarts[i], now);
+            }
+            report_uarts();
+            if (ctx->gotFinish()) {
+                std::printf("\x1e" "F %llu\n", (unsigned long long)now);
+                std::fflush(stdout);
+                break;
+            }
+            now = target;
+            ctx->time(now);
+            print_outputs(top.get(), now);
+        }
+    }
+    top->final();
+    return 0;
+}
