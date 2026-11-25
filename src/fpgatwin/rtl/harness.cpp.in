@@ -38,14 +38,27 @@ struct Clock {
     uint64_t k;       // number of edges already applied
     uint64_t next_ps; // time of edge k+1
     int level;        // 0/1 before inversion
+    // next_ps = floor(k * PS / den), kept exact without a 128-bit division per edge:
+    // each edge adds step_q and accumulates step_r in frac (carry when frac >= den).
+    uint64_t den, step_q, step_r, frac;
 };
 
 static Clock clocks[@NCLOCKS@ + 1];
 static const int nclocks = @NCLOCKS@;
 
-static uint64_t edge_time(const Clock& c, uint64_t k) {
-    // edge k happens at k * T/2 = k * 1e12 / (2 f) ps, computed exactly (no drift)
-    return (uint64_t)(((u128)k * PS) / ((u128)2 * c.freq_hz));
+// Edge k happens at floor(k * T/2) = floor(k * 1e12 / (2 f)) ps, exactly (no drift).
+static void clock_setup(Clock& c) {
+    c.den = 2 * c.freq_hz;
+    c.step_q = PS / c.den;
+    c.step_r = PS % c.den;
+    c.next_ps = c.step_q;  // edge 1
+    c.frac = c.step_r;
+}
+
+static void clock_step(Clock& c) {  // advance next_ps from edge k to edge k+1
+    c.next_ps += c.step_q;
+    c.frac += c.step_r;
+    if (c.frac >= c.den) { c.frac -= c.den; c.next_ps += 1; }
 }
 
 static void drive_clock(@CLASS@* top, int i, int value) {
@@ -267,7 +280,7 @@ int main(int argc, char** argv) {
                     if (c.next_ps == now) {
                         c.level ^= 1;
                         c.k += 1;
-                        c.next_ps = edge_time(c, c.k + 1);
+                        clock_step(c);
                         drive_clock(top.get(), i, c.level ^ (c.inverted ? 1 : 0));
                     }
                 }

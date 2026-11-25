@@ -14,6 +14,7 @@ module uart_echo #(
 );
     localparam integer CLKS_PER_BIT = CLK_HZ / BAUD;  // 234（略快於 234.375，回傳不會積壓）
     localparam integer MSG_LEN = 22;
+    localparam [4:0]   MSG_N   = 5'd22;  // MSG_LEN as a 5-bit value for idx
     localparam [8*MSG_LEN-1:0] MSG = "Hello from FPGATwin!\015\012";
 
     wire       rx_valid;
@@ -41,8 +42,8 @@ module uart_echo #(
             led     <= 4'd0;
         end else begin
             if (!tx_busy && !tx_start) begin
-                if (idx < MSG_LEN) begin
-                    tx_data  <= MSG[8*(MSG_LEN-1-idx) +: 8];
+                if (idx < MSG_N) begin
+                    tx_data  <= MSG[{MSG_N - 5'd1 - idx, 3'b000} +: 8];
                     tx_start <= 1'b1;
                     idx      <= idx + 5'd1;
                 end else if (pending) begin

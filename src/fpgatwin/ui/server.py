@@ -170,20 +170,27 @@ class _Handler(BaseHTTPRequestHandler):
         pass  # keep the console quiet
 
     # ---- helpers ------------------------------------------------------------
-    def _send(self, status: int, body: bytes, ctype: str) -> None:
+    def _send(self, status: int, body: bytes, ctype: str, close: bool = False) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if close:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, obj: Any, status: int = HTTPStatus.OK) -> None:
-        self._send(status, json.dumps(obj).encode("utf-8"), "application/json; charset=utf-8")
+    def _json(self, obj: Any, status: int = HTTPStatus.OK, close: bool = False) -> None:
+        self._send(status, json.dumps(obj).encode("utf-8"), "application/json; charset=utf-8",
+                   close)
 
     def _error(self, status: int, message: str, **extra: Any) -> None:
-        self._json({"error": message, **extra}, status)
+        # An error may be sent before the request body was read (bad token, too large, ...).
+        # Unread bytes would be parsed as the next request on this keep-alive connection, so
+        # close it instead.
+        self._json({"error": message, **extra}, status, close=True)
 
     def _host_ok(self) -> bool:
         if self.headers.get("Host", "") in self.server.allowed_hosts():

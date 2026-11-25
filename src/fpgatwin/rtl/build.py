@@ -32,6 +32,12 @@ _DEFINES = [
     "-DVERILATOR=1", "-DVM_COVERAGE=0", "-DVM_SC=0", "-DVM_TIMING=0", "-DVM_TRACE=0",
     "-DVM_TRACE_FST=0", "-DVM_TRACE_VCD=0", "-DVM_TRACE_SAIF=0", "-DVM_VPI=0",
 ]
+# Optimisation for the model, harness and Verilator runtime: eval() runs in the runtime
+# (VlEvalLoop), so -Os there roughly halves simulation speed. Part of every cache key, so
+# changing it rebuilds instead of silently reusing old binaries.
+_MODEL_OPT = ["-O2"]
+# Bump when the build commands change in a way the other key parts do not capture.
+_BUILD_RECIPE = "2"
 
 
 class BuildError(RuntimeError):
@@ -152,7 +158,7 @@ def _classes(mk_text: str) -> dict[str, list[str]]:
 
 def _runtime_objects(tc: Toolchain, names: list[str]) -> list[Path]:
     """Compile Verilator's runtime sources once per toolchain and reuse them."""
-    key = _hash(str(tc.root), tc.version, tc.cxx, *tc.cxx_flags(), *_DEFINES)
+    key = _hash(str(tc.root), tc.version, tc.cxx, *tc.cxx_flags(), *_MODEL_OPT, *_DEFINES)
     rdir = cache_root() / f"runtime-{key}"
     rdir.mkdir(parents=True, exist_ok=True)
     rdir = Path(_tool_path(rdir, "build cache"))
@@ -163,7 +169,7 @@ def _runtime_objects(tc: Toolchain, names: list[str]) -> list[Path]:
         if not obj.is_file():
             src = inc / f"{name}.cpp"
             tmp = rdir / f"{name}.o.tmp"
-            _run([tc.cxx, *tc.cxx_flags(), "-Os", *_DEFINES, f"-I{inc}",
+            _run([tc.cxx, *tc.cxx_flags(), *_MODEL_OPT, *_DEFINES, f"-I{inc}",
                   f"-I{inc / 'vltstd'}", "-c", str(src), "-o", str(tmp)],
                  tc, rdir, f"compiling Verilator runtime ({name})")
             tmp.replace(obj)
@@ -179,7 +185,7 @@ def _gen_harness(mapping: Mapping, header: str) -> str:
     )
     clock_init = "\n".join(
         f"    clocks[{i}] = Clock{{{c.freq_hz}ULL, {'true' if c.inverted else 'false'}, 0, 0, 0}};"
-        f" clocks[{i}].next_ps = edge_time(clocks[{i}], 1);"
+        f" clock_setup(clocks[{i}]);"
         for i, c in enumerate(mapping.clocks)
     )
     clock_ports = {c.port for c in mapping.clocks}
@@ -248,7 +254,8 @@ def build(
          if f.is_file() and f.suffix.lower() in _HDL_EXTS} | set(sources)
     )
     key = _hash(
-        __version__, tc.version, tc.cxx, *tc.cxx_flags(), *tc.link_flags(), str(top),
+        __version__, _BUILD_RECIPE, tc.version, tc.cxx, *tc.cxx_flags(), *_MODEL_OPT,
+        *tc.link_flags(), str(top),
         board["board"]["id"], harness_tpl, prim_bytes, ucf_file.read_bytes(), str(board),
         *[str(s) for s in sources],
         *[part for f in dep_files for part in (str(f), f.read_bytes())],
@@ -303,7 +310,7 @@ def build(
     tmp_exe = exe.with_name(exe.name + ".tmp" + (".exe" if IS_WINDOWS else ""))
     inc = _tool_path(tc.include, "Verilator include")
     _run(
-        [tc.cxx, *tc.cxx_flags(), "-O2", *_DEFINES, f"-DVM_PREFIX_INCLUDE=<{PREFIX}.h>",
+        [tc.cxx, *tc.cxx_flags(), *_MODEL_OPT, *_DEFINES, f"-DVM_PREFIX_INCLUDE=<{PREFIX}.h>",
          f"-I{obj}", f"-I{inc}", f"-I{Path(inc) / 'vltstd'}",
          str(bdir / "harness.cpp"), *[str(s) for s in model_srcs], *[str(o) for o in runtime],
          "-o", str(tmp_exe), *tc.link_flags()],

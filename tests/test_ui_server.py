@@ -101,6 +101,28 @@ def test_post_requires_token(server):
     assert server.runner.engine.snapshot()["pins"]["D14"] == 0
 
 
+def test_rejected_post_does_not_poison_keepalive(server):
+    """An error sent before the body is read must close the connection; otherwise the unread
+    body is parsed as the start of the next request (this broke the next UI click)."""
+    import socket
+
+    host, port = server.server_address[:2]
+    body = b'{"pin": "D14", "value": 1}'
+    req = (b"POST /api/pin HTTP/1.1\r\nHost: %s:%d\r\nContent-Type: application/json\r\n"
+           b"Content-Length: %d\r\n\r\n" % (host.encode(), port, len(body))) + body
+    with socket.create_connection((host, port), timeout=10) as s:
+        s.sendall(req)  # no token -> 403 without reading the body
+        s.sendall(req.replace(b"Content-Type", b"X-FPGATwin-Token: %s\r\nContent-Type"
+                              % server.token.encode()))
+        data = b""
+        while chunk := s.recv(65536):
+            data += chunk
+    head = data.split(b"\r\n\r\n", 1)[0]
+    assert head.startswith(b"HTTP/1.1 403")
+    assert b"Connection: close" in head
+    assert data.count(b"HTTP/1.") == 1  # the leftover body was never parsed as a request
+
+
 def test_bad_host_rejected(server):
     """DNS rebinding: a page on evil.example resolving to 127.0.0.1 sends Host: evil.example."""
     for method in ("GET", "POST"):

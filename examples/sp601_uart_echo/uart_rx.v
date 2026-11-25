@@ -9,8 +9,8 @@ module uart_rx #(
     output reg        valid = 1'b0,
     output reg  [7:0] data  = 8'd0
 );
-    localparam [15:0] FULL = CLKS_PER_BIT - 1;
-    localparam [15:0] HALF = CLKS_PER_BIT / 2 - 1;
+    localparam [15:0] FULL = CLKS_PER_BIT[15:0] - 16'd1;
+    localparam [15:0] HALF = CLKS_PER_BIT[16:1] - 16'd1;
 
     reg [1:0]  sync    = 2'b11;  // two-flop synchroniser, idle high
     reg        active  = 1'b0;

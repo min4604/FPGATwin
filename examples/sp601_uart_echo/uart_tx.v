@@ -10,7 +10,7 @@ module uart_tx #(
     output reg        tx = 1'b1,
     output wire       busy
 );
-    localparam [15:0] LAST = CLKS_PER_BIT - 1;
+    localparam [15:0] LAST = CLKS_PER_BIT[15:0] - 16'd1;
 
     reg        active  = 1'b0;
     reg [3:0]  bit_idx = 4'd0;   // 0 = start bit, 1..8 = data bits, 9 = stop bit
