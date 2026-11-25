@@ -31,6 +31,8 @@
 src/fpgatwin/
 ├── cli.py                  # 命令列入口 `fpgatwin`
 ├── board.py                # board.yaml 載入
+├── engine.py               # 模擬引擎介面（目前為 demo 引擎）
+├── ui/                     # 本機網頁介面（HTTP + Server-Sent Events）
 ├── constraints/            # .ucf / .xdc 解析（開發中）
 ├── boards/<board_id>/      # 各開發板的 board.yaml
 ├── primitives/<family>/    # Clean-room FPGA 原語模型
@@ -47,7 +49,22 @@ conda activate fpgatwin
 pytest
 fpgatwin boards                       # 列出支援的開發板
 fpgatwin board xilinx_sp601           # 顯示板上硬體映射
+fpgatwin ui                           # 開啟虛擬開發板網頁介面（http://127.0.0.1:8600/）
 ```
+
+### 網頁介面
+
+`fpgatwin ui` 會在本機（只綁定 `127.0.0.1`）啟動伺服器並開啟瀏覽器，依 `board.yaml` 畫出 LED、DIP 開關與按鈕（按住 = 按下）。
+
+> 目前畫面由內建的 **demo 引擎** 驅動（行為同 `examples/sp601_blinky`），尚未執行你的 RTL。
+
+| 選項 | 說明 |
+| :--- | :--- |
+| `--board` | 開發板 id（預設 `xilinx_sp601`） |
+| `--port` | 本機埠號（預設 `8600`） |
+| `--clock` | 驅動 demo 引擎的時脈（預設自動選單端時脈） |
+| `--speed` | 相對真實時間的模擬速度（預設 `1.0`） |
+| `--no-browser` | 不自動開啟瀏覽器 |
 
 套件本身支援 Python 3.10 以上。`environment.yml` 已包含 [Verilator](https://www.veripool.org/verilator/)、g++ 與 make。
 

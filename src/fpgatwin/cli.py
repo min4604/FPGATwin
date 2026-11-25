@@ -32,6 +32,33 @@ def _cmd_board_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    import webbrowser
+
+    from fpgatwin.ui.server import create_server
+
+    board = load_board(args.board)
+    try:
+        server = create_server(board, port=args.port, speed=args.speed, clock=args.clock)
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        return 2
+    print(f"FPGATwin UI ({board['board']['name']}, demo engine): {server.url}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
+    if not args.no_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fpgatwin",
@@ -46,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_show = sub.add_parser("board", help="show a board's hardware mapping")
     p_show.add_argument("board_id")
     p_show.set_defaults(func=_cmd_board_show)
+
+    p_ui = sub.add_parser("ui", help="open the virtual board in a local web UI")
+    p_ui.add_argument("--board", default="xilinx_sp601", help="board id (default: xilinx_sp601)")
+    p_ui.add_argument("--port", type=int, default=8600, help="local port (default: 8600)")
+    p_ui.add_argument(
+        "--speed", type=float, default=1.0, help="simulation speed vs. real time (default: 1.0)"
+    )
+    p_ui.add_argument("--clock", help="clock driving the demo engine (default: auto)")
+    p_ui.add_argument("--no-browser", action="store_true", help="don't open a browser")
+    p_ui.set_defaults(func=_cmd_ui)
 
     return parser
 

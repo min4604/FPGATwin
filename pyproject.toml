@@ -36,6 +36,7 @@ fpgatwin = [
     "boards/*/*.yaml",
     "primitives/**/*",
     "runtime/**/*",
+    "ui/static/*",
 ]
 
 [tool.pytest.ini_options]

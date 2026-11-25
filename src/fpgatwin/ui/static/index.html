@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPGATwin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brand-name">FPGATwin</span>
+    </div>
+    <div class="board-id">
+      <span id="board-name">載入中…</span>
+      <span id="board-part" class="muted"></span>
+    </div>
+    <div id="conn" class="conn conn-wait" title="連線狀態">連線中</div>
+  </header>
+
+  <div id="demo-banner" class="banner" hidden>
+    <strong>Demo 引擎</strong>：目前畫面由內建的示範計數器驅動（行為同 <code>examples/sp601_blinky</code>），
+    <em>不是</em>你的 RTL。接上 Verilator 後會改為執行實際設計。
+  </div>
+
+  <main class="layout">
+    <section class="board-panel" aria-label="開發板">
+      <div class="card">
+        <h2>LED</h2>
+        <div id="leds" class="row leds"></div>
+      </div>
+      <div class="card">
+        <h2>DIP 開關</h2>
+        <div id="switches" class="row switches"></div>
+      </div>
+      <div class="card">
+        <h2>按鈕 <span class="hint">按住 = 按下</span></h2>
+        <div id="buttons" class="row buttons"></div>
+      </div>
+    </section>
+
+    <aside class="side-panel">
+      <div class="card">
+        <h2>模擬狀態</h2>
+        <dl class="stats">
+          <dt>引擎</dt><dd id="st-engine">—</dd>
+          <dt>模擬時間</dt><dd id="st-time">—</dd>
+          <dt>時脈週期</dt><dd id="st-cycles">—</dd>
+          <dt>模擬速率</dt><dd id="st-rate">—</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h2>時脈</h2>
+        <ul id="clocks" class="clocks"></ul>
+      </div>
+      <div class="card">
+        <h2>UART</h2>
+        <div id="uart" class="uart uart-off">尚未支援：demo 引擎沒有 UART 輸出。</div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="foot muted">
+    FPGATwin 為獨立開源專案，與任何 FPGA 廠商無關。模擬僅供邏輯與功能驗證。
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

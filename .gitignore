@@ -89,5 +89,5 @@ xlnx_auto_0_xdb/
 Thumbs.db
 desktop.ini
 
-# ===== Claude Code 本機設定 =====
-.claude/settings.local.json
+# ===== Claude Code 本機設定（可能含本機路徑）=====
+.claude/
