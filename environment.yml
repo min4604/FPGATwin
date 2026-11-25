@@ -1,0 +1,17 @@
+# FPGATwin 本機開發環境
+# 建立：conda env create -f environment.yml
+# 更新：conda env update -f environment.yml --prune
+name: fpgatwin
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12   # 套件本身支援 >=3.10，開發環境固定 3.12
+  - pip
+  - pyyaml>=6.0
+  - pytest>=8.0
+  - ruff
+  # 模擬工具鏈（fpgatwin 會自動處理 Windows 上的建置參數，見 README「Windows 備註」）
+  - verilator>=5.0
+  - gxx           # MinGW-w64 g++（Linux/macOS 可改用系統編譯器）
+  - pip:
+      - -e .
