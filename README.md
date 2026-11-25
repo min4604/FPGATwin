@@ -25,6 +25,32 @@
 2. **第二階段**：DCM / PLL 衍生時脈模型
 3. **之後依需求**：SPI / BPI Flash、IIC EEPROM、Ethernet PHY 等周邊模型
 
+## 專案結構
+
+```text
+src/fpgatwin/
+├── cli.py                  # 命令列入口 `fpgatwin`
+├── board.py                # board.yaml 載入
+├── constraints/            # .ucf / .xdc 解析（開發中）
+├── boards/<board_id>/      # 各開發板的 board.yaml
+├── primitives/<family>/    # Clean-room FPGA 原語模型
+└── runtime/                # C++ 模擬執行環境（開發中）
+examples/                   # 範例 RTL + 約束檔
+tests/                      # pytest 測試
+```
+
+## 開發環境
+
+```bash
+conda env create -f environment.yml   # 建立 fpgatwin 環境（Python 3.12，含 editable 安裝）
+conda activate fpgatwin
+pytest
+fpgatwin boards                       # 列出支援的開發板
+fpgatwin board xilinx_sp601           # 顯示板上硬體映射
+```
+
+套件本身支援 Python 3.10 以上。模擬功能之後需要另外安裝 [Verilator](https://www.veripool.org/verilator/)。
+
 ## 限制
 
 本專案僅供**邏輯與功能驗證**，無法重現實體電氣特性，例如訊號完整性、時脈抖動、時序收斂，以及上電順序等硬體操作安全事項。模擬結果正確不代表設計在實體板上一定能正常運作。

@@ -1,0 +1,71 @@
+# SP601 Evaluation Board — 板上預設硬體映射
+# 腳位為公開的硬體事實資料，依官方 SP601 Hardware User Guide (UG518 v1.4) 重新整理。
+# 本專案與 AMD / Xilinx 無關。
+#
+# 尚未收錄（之後依開發階段補上）：
+#   GPIO 排針 J13、FMC-LPC J1、DDR2、SPI/BPI Flash、IIC EEPROM、Ethernet PHY、狀態 LED
+
+board:
+  id: xilinx_sp601
+  name: "SP601 Evaluation Board"
+  fpga:
+    vendor: xilinx
+    family: spartan6
+    part: XC6SLX16-2CSG324
+  constraint_format: ucf
+
+clocks:
+  - name: SYSCLK
+    type: differential      # U5, 2.5V LVDS
+    freq_hz: 200000000
+    pins: { p: K15, n: K16 }
+  - name: USER_CLOCK
+    type: single_ended      # X2 插座振盪器，出廠為 27 MHz，可更換
+    freq_hz: 27000000
+    pins: { p: V10 }
+  - name: USER_SMA_CLOCK
+    type: differential      # J7 (P) / J8 (N)，外部輸入
+    freq_hz: null
+    pins: { p: H17, n: H18 }
+
+peripherals:
+  - id: user_leds
+    type: led_array
+    active_high: true
+    items:
+      - { label: "DS11 (GPIO_LED_0)", pin: E13, color: green }
+      - { label: "DS12 (GPIO_LED_1)", pin: C14, color: green }
+      - { label: "DS13 (GPIO_LED_2)", pin: C4,  color: green }
+      - { label: "DS14 (GPIO_LED_3)", pin: A4,  color: green }
+
+  - id: user_switches
+    type: dip_switch
+    active_high: true
+    default_pull: down      # 板上 4.7K 下拉
+    items:
+      - { label: "SW8.1 (GPIO_SWITCH_0)", pin: D14 }
+      - { label: "SW8.2 (GPIO_SWITCH_1)", pin: E12 }
+      - { label: "SW8.3 (GPIO_SWITCH_2)", pin: F12 }
+      - { label: "SW8.4 (GPIO_SWITCH_3)", pin: V13 }
+
+  - id: user_buttons
+    type: pushbutton_array
+    active_high: true
+    default_pull: down      # 板上 4.7K 下拉
+    items:
+      - { label: "SW6 (GPIO_BUTTON_0)", pin: P4 }
+      - { label: "SW4 (GPIO_BUTTON_1)", pin: F6 }
+      - { label: "SW5 (GPIO_BUTTON_2)", pin: E4 }
+      - { label: "SW7 (GPIO_BUTTON_3)", pin: F5 }
+      - { label: "SW9 (CPU_RESET)",     pin: N4 }
+
+  - id: uart0
+    type: uart
+    chip: CP2103GM          # USB-to-UART bridge (U4)
+    # 方向以 FPGA 為準。注意：原理圖網路名稱是從 CP2103 角度命名的，
+    # 例如 FPGA 的 TX 腳 L12 在原理圖上叫 USB_1_RX。
+    pins:
+      tx_from_fpga: L12
+      rx_to_fpga: K14
+      rts_from_fpga: U10
+      cts_to_fpga: T5

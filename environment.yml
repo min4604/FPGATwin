@@ -1,0 +1,14 @@
+# FPGATwin 本機開發環境
+# 建立：conda env create -f environment.yml
+# 更新：conda env update -f environment.yml --prune
+name: fpgatwin
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12   # 套件本身支援 >=3.10，開發環境固定 3.12
+  - pip
+  - pyyaml>=6.0
+  - pytest>=8.0
+  - ruff
+  - pip:
+      - -e .
