@@ -1,0 +1,93 @@
+# ===== 參考資料保護（本倉庫為 public）=====
+# 原廠手冊、資料表、原理圖一律放在專案外的參考資料夾，不進版控
+*.pdf
+*.PDF
+# 若日後需要提交自製的 PDF（例如架構圖），在下方用 ! 個別放行：
+# !docs/images/architecture.pdf
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== C / C++ / Verilator =====
+obj_dir/
+*.o
+*.a
+*.so
+*.dll
+*.exe
+*.obj
+*.lib
+*.d
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+
+# ===== 模擬輸出 =====
+*.vcd
+*.fst
+*.ghw
+*.lxt
+*.lxt2
+*.log
+
+# ===== Xilinx ISE / Vivado 產物（範例專案可能產生）=====
+*.bit
+*.bin
+*.ncd
+*.ngd
+*.ngc
+*.ngr
+*.pcf
+*.bgn
+*.drc
+*.twr
+*.twx
+*.xrpt
+*.map
+*.mrp
+*.par
+*.pad
+*.ptwx
+*.unroutes
+*.xpi
+*.xwbt
+*.xst
+*.srp
+*.lso
+*.prj.bak
+_xmsgs/
+xst/
+iseconfig/
+xlnx_auto_0_xdb/
+.Xil/
+*.jou
+
+# ===== 機密 =====
+.env
+.env.*
+*.pem
+*.key
+
+# ===== 編輯器 / 作業系統 =====
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Claude Code 本機設定 =====
+.claude/settings.local.json
