@@ -10,5 +10,9 @@ dependencies:
   - pyyaml>=6.0
   - pytest>=8.0
   - ruff
+  # 模擬工具鏈（Windows 上的建置參數見 README「在 Windows 上用 Verilator」）
+  - verilator>=5.0
+  - gxx           # MinGW-w64 g++（Linux/macOS 可改用系統編譯器）
+  - make
   - pip:
       - -e .

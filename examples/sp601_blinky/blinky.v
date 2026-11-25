@@ -7,11 +7,16 @@ module blinky #(
 ) (
     input  wire       USER_CLOCK,
     input  wire       CPU_RESET,
+    /* verilator lint_off UNUSEDSIGNAL */  // 只用到 SW8.1，其餘保留給使用者擴充
     input  wire [3:0] GPIO_SWITCH,
+    /* verilator lint_on UNUSEDSIGNAL */
     output wire [3:0] GPIO_LED
 );
 
+    // FPGA 上電時暫存器會載入初始值，因此同時保留初始值與 reset 是常見寫法
+    /* verilator lint_off PROCASSINIT */
     reg [CNT_BITS-1:0] counter = {CNT_BITS{1'b0}};
+    /* verilator lint_on PROCASSINIT */
 
     always @(posedge USER_CLOCK) begin
         if (CPU_RESET)

@@ -49,7 +49,32 @@ fpgatwin boards                       # 列出支援的開發板
 fpgatwin board xilinx_sp601           # 顯示板上硬體映射
 ```
 
-套件本身支援 Python 3.10 以上。模擬功能之後需要另外安裝 [Verilator](https://www.veripool.org/verilator/)。
+套件本身支援 Python 3.10 以上。`environment.yml` 已包含 [Verilator](https://www.veripool.org/verilator/)、g++ 與 make。
+
+### 在 Windows 上用 Verilator（conda-forge 版）
+
+conda-forge 的 Windows 版 Verilator 預設的編譯器路徑指向打包機器上的 MSVC，需要手動覆寫。請在 **Git Bash** 中執行（Makefile 需要 POSIX shell）：
+
+```bash
+E="$(cygpath "$(conda run -n fpgatwin python -c 'import sys; print(sys.prefix)' | tr -d '\r')")"
+export PATH="$E/Library/bin:$E/bin:$PATH"
+perl "$E/Library/bin/verilator" --cc --exe --build -Wall \
+    -MAKEFLAGS CXX=g++ -MAKEFLAGS LINK=g++ \
+    -MAKEFLAGS AR=x86_64-w64-mingw32-ar -MAKEFLAGS PYTHON3=python \
+    -MAKEFLAGS CFG_CXXFLAGS_STD=-std=gnu++17 \
+    -LDFLAGS -static \
+    <design.v> <sim_main.cpp>
+```
+
+各參數的原因：
+
+| 參數 | 原因 |
+| :--- | :--- |
+| `CXX` / `LINK` / `AR` / `PYTHON3` | 套件內 `verilated.mk` 寫死了打包機器的 MSVC 與 Python 路徑 |
+| `-std=gnu++17` | conda-forge g++ 16 預設 C++20 時，`std::string` 會連結失敗 |
+| `-LDFLAGS -static` | 動態連結 `libstdc++-6.dll` 時執行會 segfault，靜態連結正常 |
+
+C++ harness 需自行定義 `double sc_time_stamp() { return 0; }`。之後 `fpgatwin` 指令會自動處理這些參數。
 
 ## 限制
 
