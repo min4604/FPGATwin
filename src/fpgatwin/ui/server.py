@@ -27,6 +27,7 @@ import json
 import mimetypes
 import re
 import secrets
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -48,6 +49,7 @@ _SSE_HEARTBEAT_S = 0.5
 MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 MAX_UPLOAD_FILES = 500
 MAX_UART_SEND = 64 * 1024
+_WAVE_PATH_RE = re.compile(r"^/api/wave/(\d+-\d+)\.vcd$")
 _HDL_EXTS = {".v", ".sv", ".vh", ".svh", ".vinc", ".inc", ".mem", ".hex", ".dat"}
 _NAME_RE = re.compile(r"^[^\\/:*?\"<>|\x00-\x1f]{1,200}$")
 
@@ -225,7 +227,30 @@ class _Handler(BaseHTTPRequestHandler):
                                "can_load": self.server.loader is not None})
         if path == "/api/events":
             return self._events()
+        m = _WAVE_PATH_RE.match(path)
+        if m:
+            return self._get_wave(m.group(1))
         self._error(HTTPStatus.NOT_FOUND, "not found")
+
+    def _get_wave(self, wid: str) -> None:
+        """Download a finished recording. Needs the token: it holds the design's signals."""
+        if not self._token_ok():
+            return
+        engine = self.server.runner.engine
+        path = engine.wave_path(wid) if hasattr(engine, "wave_path") else None
+        if path is None:
+            return self._error(HTTPStatus.NOT_FOUND, "no such recording (expired or not finished)")
+        top = re.sub(r"[^A-Za-z0-9_.-]", "_", str(engine.info.get("top", "design")))
+        with open(path, "rb") as f:
+            size = path.stat().st_size
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="{top}-{wid}.vcd"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            shutil.copyfileobj(f, self.wfile, 1024 * 1024)
 
     def _index(self) -> None:
         html = _STATIC.joinpath("index.html").read_text(encoding="utf-8")
@@ -253,6 +278,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         last_pins: dict[str, int] | None = None
         last_engine = None
+        last_wave = None
         last_sent = 0.0
         uart_seq: dict[str, int] = {}  # bytes already streamed, per UART of the current engine
         try:
@@ -272,12 +298,14 @@ class _Handler(BaseHTTPRequestHandler):
                 if uart_rx:
                     snap["uart_rx"] = uart_rx
                 now = time.monotonic()
+                wave = snap.get("wave")
                 if (snap["pins"] != last_pins or id(engine) != last_engine or uart_rx
-                        or now - last_sent >= _SSE_HEARTBEAT_S):
+                        or wave != last_wave or now - last_sent >= _SSE_HEARTBEAT_S):
                     self.wfile.write(f"data: {json.dumps(snap)}\n\n".encode())
                     self.wfile.flush()
                     last_pins = snap["pins"]
                     last_engine = id(engine)
+                    last_wave = wave
                     last_sent = now
                 time.sleep(_SSE_INTERVAL_S)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -295,7 +323,30 @@ class _Handler(BaseHTTPRequestHandler):
             return self._post_demo()
         if self.path == "/api/uart":
             return self._post_uart()
+        if self.path == "/api/wave":
+            return self._post_wave()
         self._error(HTTPStatus.NOT_FOUND, "not found")
+
+    def _post_wave(self) -> None:
+        """{"action": "start", "ms": 10} or {"action": "stop"}"""
+        try:
+            req = self._read_json(64 * 1024)
+            action = str(req["action"])
+            ms = float(req.get("ms", 0)) if action == "start" else 0.0
+            if action not in ("start", "stop"):
+                raise ValueError("action must be start or stop")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            return self._error(HTTPStatus.BAD_REQUEST, f"bad waveform request: {exc}")
+        engine = self.server.runner.engine
+        if not hasattr(engine, "wave_start"):
+            return self._error(HTTPStatus.BAD_REQUEST, "the current engine cannot record waveforms")
+        try:
+            wave = engine.wave_start(ms) if action == "start" else engine.wave_stop()
+        except ValueError as exc:
+            return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except RuntimeError as exc:
+            return self._error(HTTPStatus.CONFLICT, str(exc))
+        self._json({"ok": True, "wave": wave})
 
     def _post_uart(self) -> None:
         """{"id": "uart0", "data"?: "text", "hex"?: "0d0a", "baud"?: 115200}"""

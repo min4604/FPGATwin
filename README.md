@@ -11,6 +11,7 @@
 - **直接讀取廠商標準約束檔**：`.ucf`（ISE）、`.xdc`（Vivado），既有專案不需改寫成自訂格式
 - **瀏覽器上的虛擬開發板**：看 LED、撥開關、按按鈕、用 UART 終端機收發資料；可直接在網頁上選擇設計檔案並編譯
 - **腳位層級的 UART**：模擬板上的 USB-UART 晶片，跑的是你 RTL 裡自己的 UART 邏輯
+- **波形擷取**：隨時錄下一段模擬（含設計內部訊號），存成 VCD 用 GTKWave / Surfer 檢視
 - **資料驅動的開發板定義**：每塊板子以一份 `board.yaml` 描述板上時脈、LED、開關、按鈕、UART 等硬體的腳位映射，新增板子不需改程式
 - **以 [Verilator](https://www.veripool.org/verilator/) 為模擬核心**，支援 Verilog / SystemVerilog
 - **Clean-room 原語模型**：依公開文件從零撰寫的常用 FPGA 原語（時脈緩衝器等）
@@ -107,10 +108,11 @@ fpgatwin build --rtl my_design.v --ucf my_design.ucf
 - 頂層 port 接到板上的**時脈**（自動產生，差動時脈的 N 端自動反相）、**LED、DIP 開關、按鈕**
 - 已內建的 Spartan-6 原語：`IBUF`、`IBUFG`、`IBUFDS`、`IBUFGDS`、`OBUF`、`BUFG`
 - **UART**：模擬板上的 USB-UART 晶片（SP601 為 CP2103：FPGA TX = L12、RX = K14），以腳位層級收發 8N1 訊框，所以跑的是你 RTL 裡自己的 UART 邏輯。網頁的 UART 區可選鮑率（預設 115200）、以文字或 HEX 顯示、輸入文字送給 FPGA；停止位元錯誤會顯示「框架錯誤」，通常代表鮑率與設計不符。CTS 固定為允許傳送，RTS 不使用。範例見 `examples/sp601_uart_echo`
+- **波形擷取**：網頁右側「波形擷取」區選擇長度（1–100 ms）後按「開始擷取」，從目前的模擬時間起記錄設計內所有訊號（含子模組），完成後按「下載 .vcd」，再用 [GTKWave](https://gtkwave.sourceforge.net/) 或 [Surfer](https://surfer-project.org/) 開啟。時間單位為 ps。擷取期間模擬約慢為平常的 1/5，檔案約每 ms 1–2 MB（視設計大小）；磁碟上只保留最近 3 份
 - 設計的 `$display` 輸出會印在終端機；`$finish` 會讓模擬停止並在畫面上提示
 - 尚未支援：`inout` port、超過 64 位元的 port、DCM/PLL、UART 以外的周邊、`.xdc` 的萬用字元與 `-filter`、有 parity 或 2 個停止位元等非 8N1 的 UART 格式
 
-編譯結果依內容快取在 `%LOCALAPPDATA%\fpgatwin\cache`（Linux/macOS：`~/.cache/fpgatwin`），可用環境變數 `FPGATWIN_CACHE` 改位置。第一次使用約 10–15 秒（含一次性編譯 Verilator runtime），之後每個新設計約 5–10 秒，相同設計直接重用（1 秒內）。
+編譯結果依內容快取在 `%LOCALAPPDATA%\fpgatwin\cache`（Linux/macOS：`~/.cache/fpgatwin`），可用環境變數 `FPGATWIN_CACHE` 改位置。第一次使用約 15–20 秒（含一次性編譯 Verilator runtime），之後每個新設計約 8–12 秒（含波形記錄支援，不擷取時不影響模擬速度），相同設計直接重用（1 秒內）。
 
 ### 模擬速度
 

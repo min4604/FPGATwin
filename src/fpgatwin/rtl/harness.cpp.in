@@ -6,10 +6,15 @@
 //   r <ps>           run for <ps> picoseconds          -> "\x1eO <time_ps> <out0> <out1> ..."
 //   b <uart> <baud>  set a UART's baud rate (default 115200, 8N1)
 //   u <uart> <hex>   queue bytes for the design to receive (driven on its RX pin)
+//   w <ps> <path>    start recording a VCD waveform to <path> for <ps> picoseconds (0 = until
+//                    stopped)                     -> "\x1eW open <time_ps>" or "\x1eW error <msg>"
+//   W                stop recording               -> "\x1eW done <start_ps> <end_ps>" ("W idle"
+//                    when nothing was recording)
 //   q                quit
 // On start: "\x1eR".  On $finish: "\x1eF <time_ps>" then exit.
 // Before "O"/"F", each UART with news prints "\x1eU <uart> <framing_errors> <hex|->" with the
-// bytes the design transmitted since the last report.
+// bytes the design transmitted since the last report. A recording that reaches its length
+// during "r" ends with "\x1eW done <start_ps> <end_ps>", also printed before "O".
 //
 // UART model (the board's USB-UART bridge): both directions run on simulation time. The TX
 // decoder watches the design's TX bit after every evaluation, waits for a falling edge (start
@@ -25,6 +30,9 @@
 #include <string>
 #include "@HEADER@"
 #include "verilated.h"
+#if VM_TRACE
+#include "verilated_vcd_c.h"
+#endif
 
 double sc_time_stamp() { return 0; }  // legacy hook still referenced by verilated.cpp
 
@@ -213,9 +221,74 @@ static int hexval(char c) {
     return -1;
 }
 
+// ---- waveform recording ------------------------------------------------------------------
+
+struct Wave {
+#if VM_TRACE
+    std::unique_ptr<VerilatedVcdC> vcd;
+#endif
+    bool on = false;
+    bool dumped = false;
+    uint64_t start = 0, end = NEVER, last = 0;
+};
+static Wave wave;
+
+static void wave_dump(uint64_t now) {
+#if VM_TRACE
+    if (!wave.on) return;
+    if (wave.dumped && now <= wave.last) return;  // the VCD writer rejects repeated times
+    wave.vcd->dump(now);
+    wave.last = now;
+    wave.dumped = true;
+#else
+    (void)now;
+#endif
+}
+
+static void wave_stop(uint64_t now) {
+#if VM_TRACE
+    if (!wave.on) return;
+    wave.vcd->close();
+    wave.vcd.reset();
+    wave.on = false;
+    std::printf("\x1eW done %llu %llu\n", (unsigned long long)wave.start, (unsigned long long)now);
+#else
+    (void)now;
+#endif
+}
+
+static void wave_start(@CLASS@* top, uint64_t now, uint64_t span, const char* path) {
+#if VM_TRACE
+    wave_stop(now);
+    wave.vcd = std::make_unique<VerilatedVcdC>();
+    wave.vcd->set_time_unit("1ps");
+    wave.vcd->set_time_resolution("1ps");
+    top->trace(wave.vcd.get(), 99);
+    wave.vcd->open(path);
+    if (!wave.vcd->isOpen()) {
+        wave.vcd.reset();
+        std::printf("\x1eW error cannot open the waveform file\n");
+    } else {
+        wave.on = true;
+        wave.dumped = false;
+        wave.start = now;
+        wave.end = span ? now + span : NEVER;
+        wave_dump(now);
+        std::printf("\x1eW open %llu\n", (unsigned long long)now);
+    }
+#else
+    (void)top; (void)now; (void)span; (void)path;
+    std::printf("\x1eW error waveform recording is not built in\n");
+#endif
+    std::fflush(stdout);
+}
+
 int main(int argc, char** argv) {
     auto ctx = std::make_unique<VerilatedContext>();
     ctx->commandArgs(argc, argv);
+#if VM_TRACE
+    ctx->traceEverOn(true);
+#endif
     auto top = std::make_unique<@CLASS@>(ctx.get());
     uint64_t now = 0;
 
@@ -242,7 +315,20 @@ int main(int argc, char** argv) {
             if (std::sscanf(line + 1, "%d %llx", &port, &v) == 2) {
                 set_input(top.get(), port, (uint64_t)v);
                 top->eval();
+                wave_dump(now);
             }
+        } else if (line[0] == 'w') {
+            unsigned long long span = 0;
+            int off = 0;
+            if (std::sscanf(line + 1, "%llu %n", &span, &off) >= 1 && off > 0) {
+                char* path = line + 1 + off;
+                path[std::strcspn(path, "\r\n")] = '\0';
+                wave_start(top.get(), now, (uint64_t)span, path);
+            }
+        } else if (line[0] == 'W') {
+            if (wave.on) wave_stop(now);
+            else std::printf("\x1eW idle\n");
+            std::fflush(stdout);
         } else if (line[0] == 'b') {
             int n = -1;
             unsigned long long baud = 0;
@@ -258,6 +344,7 @@ int main(int argc, char** argv) {
                 }
                 rx_start(top.get(), uarts[n], now);
                 top->eval();
+                wave_dump(now);
                 tx_watch(top.get(), uarts[n], now);
             }
         } else if (line[0] == 'r') {
@@ -285,10 +372,16 @@ int main(int argc, char** argv) {
                     }
                 }
                 top->eval();
+                if (wave.on) {
+                    wave_dump(now);
+                    if (now >= wave.end) wave_stop(now);
+                }
                 for (int i = 0; i < nuarts; ++i) tx_watch(top.get(), uarts[i], now);
             }
+            if (wave.on && target >= wave.end && !ctx->gotFinish()) wave_stop(wave.end);
             report_uarts();
             if (ctx->gotFinish()) {
+                wave_stop(now);
                 std::printf("\x1e" "F %llu\n", (unsigned long long)now);
                 std::fflush(stdout);
                 break;
@@ -298,6 +391,7 @@ int main(int argc, char** argv) {
             print_outputs(top.get(), now);
         }
     }
+    wave_stop(now);
     top->final();
     return 0;
 }

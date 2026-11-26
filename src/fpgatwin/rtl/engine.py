@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import itertools
+import os
 import subprocess
 import sys
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Any
 
-from fpgatwin.rtl.build import BuildResult
+from fpgatwin.rtl.build import BuildError, BuildResult, _tool_path, cache_root
 
 _SENTINEL = b"\x1e"
 UART_LOG_BYTES = 256 * 1024  # received bytes kept per UART for late-joining viewers
 DEFAULT_BAUD = 115200
+WAVE_MAX_MS = 100  # longest recording: VCD grows by roughly 1-2 MB per simulated ms
+WAVE_KEEP = 3  # recordings kept on disk (all designs); older ones are deleted
+_PS_PER_MS = 1_000_000_000
+_wave_ids = itertools.count(1)
 
 
 class VerilatorEngine:
@@ -61,8 +68,11 @@ class VerilatorEngine:
         self._uart_base = [0] * len(mp.uarts)  # seq of _uart_log[i][0]
         self._uart_errors = [0] * len(mp.uarts)
         self._uart_baud = [DEFAULT_BAUD] * len(mp.uarts)
+        self._wave: dict[str, Any] = {"state": "idle"}
+        self._wave_files: dict[str, Path] = {}
         self.info = {
             "top": result.top,
+            "wave": True,
             "connected": self.connected_pins,
             "uarts": [{"id": u.id, "label": u.label, "tx": u.tx is not None,
                        "rx": u.rx is not None, "baud": DEFAULT_BAUD} for u in mp.uarts],
@@ -145,8 +155,11 @@ class VerilatorEngine:
             try:
                 self._send(f"r {ps}\n")
                 reply = self._read_reply()
-                while reply is not None and reply.startswith(b"U"):
-                    self._on_uart(reply)
+                while reply is not None and reply[:1] in (b"U", b"W"):
+                    if reply.startswith(b"U"):
+                        self._on_uart(reply)
+                    else:
+                        self._on_wave(reply)
                     reply = self._read_reply()
             except OSError:
                 reply = None
@@ -226,6 +239,77 @@ class VerilatorEngine:
             except OSError:
                 self._fail("simulation process exited")
 
+    # ---- waveform recording -------------------------------------------------------
+    def wave_start(self, ms: float) -> dict[str, Any]:
+        """Record a VCD of the whole design for *ms* simulated milliseconds (from now)."""
+        if not 0 < ms <= WAVE_MAX_MS:
+            raise ValueError(f"recording length must be 0 .. {WAVE_MAX_MS} ms")
+        if self.status != "running":
+            raise RuntimeError("the simulation is not running")
+        wdir = cache_root() / "waves"
+        wdir.mkdir(parents=True, exist_ok=True)
+        _prune_waves(wdir, WAVE_KEEP - 1)
+        wid = f"{os.getpid()}-{next(_wave_ids)}"
+        path = wdir / f"wave-{wid}.vcd"
+        try:
+            tool_dir = _tool_path(wdir, "waveform folder")
+        except BuildError as exc:
+            raise RuntimeError(str(exc)) from None
+        span = int(ms * _PS_PER_MS)
+        with self._io_lock:
+            try:
+                self._send(f"w {span} {tool_dir}{os.sep}{path.name}\n")
+                reply = self._read_reply()
+            except OSError:
+                reply = None
+        if reply is None:
+            self._fail("simulation process exited")
+            raise RuntimeError("simulation process exited")
+        parts = reply.decode(errors="replace").split(None, 2)
+        if parts[:2] != ["W", "open"]:
+            msg = parts[2] if len(parts) > 2 else "cannot start recording"
+            with self._state_lock:
+                self._wave = {"state": "error", "message": msg}
+            raise RuntimeError(msg)
+        with self._state_lock:
+            self._wave_files[wid] = path
+            self._wave = {"state": "recording", "id": wid, "start_ps": int(parts[2]),
+                          "length_ps": span}
+            return dict(self._wave)
+
+    def wave_stop(self) -> dict[str, Any]:
+        if self.status == "running":
+            with self._io_lock:
+                try:
+                    self._send("W\n")
+                    reply = self._read_reply()
+                except OSError:
+                    reply = None
+            if reply is not None:
+                self._on_wave(reply)
+        with self._state_lock:
+            return dict(self._wave)
+
+    def wave_path(self, wid: str) -> Path | None:
+        """The finished recording *wid* of this engine, if it still exists."""
+        with self._state_lock:
+            path = self._wave_files.get(wid)
+            recording = self._wave.get("state") == "recording" and self._wave.get("id") == wid
+        return path if path is not None and not recording and path.is_file() else None
+
+    def _on_wave(self, reply: bytes) -> None:
+        parts = reply.decode(errors="replace").split()
+        if parts[1:2] != ["done"] or len(parts) < 4:
+            return
+        with self._state_lock:
+            wave = self._wave
+            if wave.get("state") != "recording":
+                return
+            path = self._wave_files.get(wave["id"])
+            size = path.stat().st_size if path is not None and path.is_file() else 0
+            self._wave = {"state": "done", "id": wave["id"], "start_ps": int(parts[2]),
+                          "end_ps": int(parts[3]), "size": size}
+
     def snapshot(self) -> dict[str, Any]:
         with self._state_lock:
             pins = dict(self._pin_state)
@@ -243,6 +327,7 @@ class VerilatorEngine:
                 "uart": {uid: {"seq": self._uart_base[i] + len(self._uart_log[i]),
                                "errors": self._uart_errors[i], "baud": self._uart_baud[i]}
                          for i, uid in enumerate(self._uart_ids)},
+                "wave": dict(self._wave),
             }
 
     def close(self) -> None:
@@ -257,3 +342,13 @@ class VerilatorEngine:
         for f in (proc.stdin, proc.stdout, self._stderr):
             if f:
                 f.close()
+
+
+def _prune_waves(wdir: Path, keep: int) -> None:
+    """Delete all but the newest *keep* recordings (files still open elsewhere are skipped)."""
+    files = sorted(wdir.glob("wave-*.vcd"), key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in files[keep:]:
+        try:
+            f.unlink()
+        except OSError:
+            pass

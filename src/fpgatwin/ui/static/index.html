@@ -118,6 +118,27 @@
         <h2>時脈</h2>
         <ul id="clocks" class="clocks"></ul>
       </div>
+      <div class="card" id="wave-card">
+        <h2>波形擷取 <span class="hint">VCD</span></h2>
+        <div id="wave-off" class="uart uart-off">—</div>
+        <div id="wave-on" hidden>
+          <div class="wave-bar">
+            <label>長度
+              <select id="wave-ms">
+                <option value="1">1 ms</option><option value="5">5 ms</option>
+                <option value="10" selected>10 ms</option><option value="50">50 ms</option>
+                <option value="100">100 ms</option>
+              </select>
+            </label>
+            <button id="wave-start" class="btn btn-primary btn-sm" type="button">開始擷取</button>
+            <button id="wave-stop" class="btn btn-sm" type="button" hidden>停止</button>
+          </div>
+          <progress id="wave-progress" class="wave-progress" max="1" value="0" hidden></progress>
+          <div id="wave-status" class="wave-status" role="status"></div>
+          <button id="wave-download" class="btn btn-sm" type="button" hidden>下載 .vcd</button>
+          <p class="hint wave-note">從目前的模擬時間開始，記錄設計內所有訊號。擷取時模擬會變慢；檔案約每 ms 1–2 MB。下載後用 GTKWave 或 Surfer 開啟。</p>
+        </div>
+      </div>
     </aside>
   </main>
 

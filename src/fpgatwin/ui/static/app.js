@@ -172,6 +172,7 @@ function applySnapshot(s) {
     if (!first) refreshEngine(); // the design was swapped (here or in another tab)
   }
   uartUpdate(s);
+  waveUpdate(s);
   for (const [pin, v] of Object.entries(s.pins)) {
     const ref = pinEls.get(pin);
     if (!ref) continue;
@@ -222,6 +223,7 @@ function applyEngine(engine) {
   for (const li of $("clocks").children) li.classList.toggle("active", li.dataset.clock === engine.clock);
   markUnconnected(new Set(engine.connected || []));
   uartConfigure(engine);
+  waveConfigure(engine);
 }
 
 // ---------------------------------------------------------------- UART terminal
@@ -364,6 +366,100 @@ function setupUart() {
     uartPost({ data }).then(() => { input.value = ""; })
       .catch((err) => alert(`送出失敗：${err.message}`));
   });
+}
+
+// ---------------------------------------------------------------- waveform capture
+
+const wave = { id: null };
+
+function fmtSize(bytes) {
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
+function waveConfigure(engine) {
+  $("wave-on").hidden = !engine.wave;
+  $("wave-off").hidden = !!engine.wave;
+  $("wave-off").textContent = engine.name === "demo"
+    ? "Demo 引擎無法擷取波形。載入自己的設計即可使用。"
+    : "目前的引擎不支援波形擷取。";
+  wave.id = null;
+  waveShow({ state: "idle" }, 0);
+}
+
+function waveStatus(kind, text) {
+  const st = $("wave-status");
+  st.className = `wave-status${kind ? ` ${kind}` : ""}`;
+  st.textContent = text;
+}
+
+function waveShow(w, simPs) {
+  const rec = w.state === "recording";
+  $("wave-start").hidden = rec;
+  $("wave-stop").hidden = !rec;
+  $("wave-ms").disabled = rec;
+  $("wave-progress").hidden = !rec;
+  $("wave-download").hidden = w.state !== "done";
+  if (rec) {
+    const done = Math.max(0, Math.min(simPs - w.start_ps, w.length_ps));
+    $("wave-progress").value = done / w.length_ps;
+    waveStatus("", `擷取中… ${fmtTime(done)} / ${fmtTime(w.length_ps)}`);
+  } else if (w.state === "done") {
+    wave.id = w.id;
+    waveStatus("ok", `已完成：${fmtTime(w.start_ps)} – ${fmtTime(w.end_ps)}，${fmtSize(w.size)}`);
+  } else if (w.state === "error") {
+    waveStatus("err", `無法擷取：${w.message || "未知錯誤"}`);
+  } else {
+    waveStatus("", "");
+  }
+}
+
+function waveUpdate(s) {
+  if (s.wave && !$("wave-on").hidden) waveShow(s.wave, s.sim_time_ps);
+}
+
+async function waveDownload() {
+  const btn = $("wave-download");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/wave/${wave.id}.vcd`, { headers: { "X-FPGATwin-Token": TOKEN } });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1]
+      || "wave.vcd";
+    const url = URL.createObjectURL(await res.blob());
+    const a = el("a", { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) {
+    waveStatus("err", `下載失敗：${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function setupWave() {
+  const send = async (body) => {
+    const res = await post("/api/wave", body);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data.wave;
+  };
+  $("wave-start").addEventListener("click", () => {
+    send({ action: "start", ms: Number($("wave-ms").value) })
+      .then((w) => waveShow(w, w.start_ps))
+      .catch((err) => waveStatus("err", `無法擷取：${err.message}`));
+  });
+  $("wave-stop").addEventListener("click", () => {
+    send({ action: "stop" }).then((w) => waveShow(w, 0))
+      .catch((err) => waveStatus("err", `無法停止：${err.message}`));
+  });
+  $("wave-download").addEventListener("click", waveDownload);
 }
 
 async function refreshEngine() {
@@ -525,6 +621,7 @@ async function main() {
   applyEngine(engine);
   setupDesignPanel(canLoad);
   setupUart();
+  setupWave();
   connect();
 }
 
