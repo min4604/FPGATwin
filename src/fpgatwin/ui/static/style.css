@@ -251,6 +251,20 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-siz
 .uart-send input { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; }
 .uart-note { margin: 8px 0 0; }
 
+/* ---- waveform capture ---- */
+.wave-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.wave-bar label { display: inline-flex; align-items: center; gap: 6px; }
+.wave-bar select {
+  font: inherit; font-size: 14px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+}
+.wave-progress { width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
+.wave-status { font-size: 13px; margin-top: 8px; overflow-wrap: anywhere; }
+.wave-status:empty { display: none; }
+.wave-status.err { color: var(--warn-text); }
+#wave-download { margin-top: 8px; }
+.wave-note { display: block; margin: 10px 0 0; font-size: 12px; line-height: 1.45; }
+
 .foot { padding: 0 20px 20px; font-size: 12px; }
 
 @media (max-width: 760px) {

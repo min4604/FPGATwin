@@ -28,16 +28,19 @@ from fpgatwin.rtl.ports import parse_model_header
 from fpgatwin.rtl.toolchain import IS_WINDOWS, Toolchain, find_toolchain, native_path
 
 PREFIX = "Vfpgatwin"
+# Waveform recording (VCD). Built in so a capture can start at any time without a rebuild.
+_TRACE = True
 _DEFINES = [
-    "-DVERILATOR=1", "-DVM_COVERAGE=0", "-DVM_SC=0", "-DVM_TIMING=0", "-DVM_TRACE=0",
-    "-DVM_TRACE_FST=0", "-DVM_TRACE_VCD=0", "-DVM_TRACE_SAIF=0", "-DVM_VPI=0",
+    "-DVERILATOR=1", "-DVM_COVERAGE=0", "-DVM_SC=0", "-DVM_TIMING=0", f"-DVM_TRACE={int(_TRACE)}",
+    "-DVM_TRACE_FST=0", f"-DVM_TRACE_VCD={int(_TRACE)}", "-DVM_TRACE_SAIF=0", "-DVM_VPI=0",
 ]
+_VERILATOR_FLAGS = ["--trace"] if _TRACE else []
 # Optimisation for the model, harness and Verilator runtime: eval() runs in the runtime
 # (VlEvalLoop), so -Os there roughly halves simulation speed. Part of every cache key, so
 # changing it rebuilds instead of silently reusing old binaries.
 _MODEL_OPT = ["-O2"]
 # Bump when the build commands change in a way the other key parts do not capture.
-_BUILD_RECIPE = "2"
+_BUILD_RECIPE = "3"
 
 
 class BuildError(RuntimeError):
@@ -255,7 +258,7 @@ def build(
     )
     key = _hash(
         __version__, _BUILD_RECIPE, tc.version, tc.cxx, *tc.cxx_flags(), *_MODEL_OPT,
-        *tc.link_flags(), str(top),
+        *_DEFINES, *_VERILATOR_FLAGS, *tc.link_flags(), str(top),
         board["board"]["id"], harness_tpl, prim_bytes, ucf_file.read_bytes(), str(board),
         *[str(s) for s in sources],
         *[part for f in dep_files for part in (str(f), f.read_bytes())],
@@ -272,7 +275,7 @@ def build(
         obj.mkdir(parents=True, exist_ok=True)
         src_args, inc_dirs = _tool_sources(sources, bdir)
         cmd = [*(tc.verilator_build or tc.verilator), "--cc", "-Wno-fatal",
-               "--prefix", PREFIX, "--Mdir", str(obj)]
+               "--prefix", PREFIX, "--Mdir", str(obj), *_VERILATOR_FLAGS]
         if top:
             cmd += ["--top-module", top]
         cmd += [f"-I{d}" for d in inc_dirs]
@@ -304,9 +307,10 @@ def build(
         for k in ("VM_CLASSES_FAST", "VM_CLASSES_SLOW", "VM_SUPPORT_FAST", "VM_SUPPORT_SLOW")
         for c in classes.get(k, [])
     ]
-    runtime = _runtime_objects(
-        tc, classes.get("VM_GLOBAL_FAST", []) + classes.get("VM_GLOBAL_SLOW", [])
-    )
+    runtime_names = classes.get("VM_GLOBAL_FAST", []) + classes.get("VM_GLOBAL_SLOW", [])
+    if _TRACE and "verilated_vcd_c" not in runtime_names:
+        runtime_names.append("verilated_vcd_c")  # verilated.mk adds it; we do not use make
+    runtime = _runtime_objects(tc, runtime_names)
     tmp_exe = exe.with_name(exe.name + ".tmp" + (".exe" if IS_WINDOWS else ""))
     inc = _tool_path(tc.include, "Verilator include")
     _run(
