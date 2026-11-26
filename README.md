@@ -4,26 +4,43 @@
 
 *A digital twin for FPGA development boards — simulate your RTL together with its pin constraints on a virtual board (LEDs, switches, buttons, UART) on your PC, no hardware required.*
 
-> ⚠️ **狀態：規劃階段（Pre-alpha）**，尚無可用功能。
+> ⚠️ **狀態：Alpha（0.0.1）**：SP601 上的行為級 RTL、LED / 開關 / 按鈕 / UART 已可使用，介面與格式仍可能變動。
 
-## 特色（規劃中）
+## 特色
 
 - **直接讀取廠商標準約束檔**：`.ucf`（ISE）、`.xdc`（Vivado），既有專案不需改寫成自訂格式
+- **瀏覽器上的虛擬開發板**：看 LED、撥開關、按按鈕、用 UART 終端機收發資料；可直接在網頁上選擇設計檔案並編譯
+- **腳位層級的 UART**：模擬板上的 USB-UART 晶片，跑的是你 RTL 裡自己的 UART 邏輯
 - **資料驅動的開發板定義**：每塊板子以一份 `board.yaml` 描述板上時脈、LED、開關、按鈕、UART 等硬體的腳位映射，新增板子不需改程式
 - **以 [Verilator](https://www.veripool.org/verilator/) 為模擬核心**，支援 Verilog / SystemVerilog
 - **Clean-room 原語模型**：依公開文件從零撰寫的常用 FPGA 原語（時脈緩衝器等）
 
-## 預計支援的開發板
+## 支援的開發板
 
 | 開發板 | FPGA | 狀態 |
 | :--- | :--- | :--- |
-| SP601 Evaluation Board | Spartan-6 XC6SLX16-2CSG324 | 規劃中 |
+| SP601 Evaluation Board | Spartan-6 XC6SLX16-2CSG324 | 可用：時脈、LED、DIP 開關、按鈕、UART |
 
 ## 開發階段
 
-1. **MVP**：純行為 RTL + `board.yaml` 腳位映射 + LED / 開關 / 按鈕 / UART + 基本緩衝器原語
+1. **MVP**（大致完成）：純行為 RTL + `board.yaml` 腳位映射 + LED / 開關 / 按鈕 / UART + 基本緩衝器原語
 2. **第二階段**：DCM / PLL 衍生時脈模型
 3. **之後依需求**：SPI / BPI Flash、IIC EEPROM、Ethernet PHY 等周邊模型
+
+## 快速開始
+
+```bash
+conda env create -f environment.yml
+conda activate fpgatwin
+fpgatwin ui --rtl examples/sp601_uart_echo --ucf examples/sp601_uart_echo/uart_echo.ucf
+```
+
+瀏覽器會開啟虛擬 SP601：UART 區會出現 `Hello from FPGATwin!`，在下方輸入文字按 Enter，FPGA 會原樣回傳，LED 顯示最後收到字元的低 4 位元。
+
+| 範例 | 內容 |
+| :--- | :--- |
+| `examples/sp601_blinky` | 4 顆 LED 二進位計數；SW8.1 暫停，CPU_RESET 清除 |
+| `examples/sp601_uart_echo` | UART 歡迎訊息 + 回傳（115200 8N1） |
 
 ## 專案結構
 
@@ -37,7 +54,7 @@ src/fpgatwin/
 ├── constraints/            # .ucf / .xdc 腳位約束解析
 ├── boards/<board_id>/      # 各開發板的 board.yaml
 ├── primitives/<family>/    # Clean-room FPGA 原語模型
-└── runtime/                # C++ 模擬執行環境（開發中）
+└── runtime/                # 保留給之後的 C++ 周邊模型（harness 目前在 rtl/）
 examples/                   # 範例 RTL + 約束檔
 tests/                      # pytest 測試
 ```
@@ -50,7 +67,8 @@ conda activate fpgatwin
 pytest
 fpgatwin boards                       # 列出支援的開發板
 fpgatwin board xilinx_sp601           # 顯示板上硬體映射
-fpgatwin ui                           # 開啟虛擬開發板網頁介面（demo 引擎）
+fpgatwin ui                           # 開啟虛擬開發板網頁介面（未指定 RTL 時為 demo 引擎）
+ruff check .                          # 程式風格檢查
 ```
 
 套件本身支援 Python 3.10 以上。`environment.yml` 已包含 [Verilator](https://www.veripool.org/verilator/) 與 g++。
@@ -92,7 +110,11 @@ fpgatwin build --rtl my_design.v --ucf my_design.ucf
 - 設計的 `$display` 輸出會印在終端機；`$finish` 會讓模擬停止並在畫面上提示
 - 尚未支援：`inout` port、超過 64 位元的 port、DCM/PLL、UART 以外的周邊、`.xdc` 的萬用字元與 `-filter`、有 parity 或 2 個停止位元等非 8N1 的 UART 格式
 
-編譯結果依內容快取在 `%LOCALAPPDATA%\fpgatwin\cache`（Linux/macOS：`~/.cache/fpgatwin`），可用環境變數 `FPGATWIN_CACHE` 改位置。第一次編譯約 10–20 秒，之後相同設計直接重用。
+編譯結果依內容快取在 `%LOCALAPPDATA%\fpgatwin\cache`（Linux/macOS：`~/.cache/fpgatwin`），可用環境變數 `FPGATWIN_CACHE` 改位置。第一次使用約 10–15 秒（含一次性編譯 Verilator runtime），之後每個新設計約 5–10 秒，相同設計直接重用（1 秒內）。
+
+### 模擬速度
+
+模擬依實際時間推進，跑不到時會盡量快，並在「模擬狀態」顯示實際速率。以 27 MHz 時脈的範例設計實測約為實際速度的 **0.7 倍**（例如 115200 baud 的 UART 看起來約 8 萬 baud）。時間幾乎都花在 Verilator 的 `eval()`（每個時脈邊緣一次），設計越大越慢；用 `--speed` 可放慢模擬以便觀察。
 
 ### Windows 備註
 
